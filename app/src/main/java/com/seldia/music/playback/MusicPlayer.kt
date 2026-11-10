@@ -234,9 +234,14 @@ class MusicPlayer(
         prepareAndPlayCurrent()
     }
 
-    fun previous() {
+    /**
+     * Pista anterior. Por defecto, si llevamos más de 3 s reproduciendo, vuelve al inicio
+     * (comportamiento habitual de la UI). Con [forceSkip] = true salta siempre a la pista
+     * anterior, que es lo que se espera de un mando físico del volante.
+     */
+    fun previous(forceSkip: Boolean = false) {
         if (queue.isEmpty()) return
-        if (player.currentPosition > 3000) {
+        if (!forceSkip && player.currentPosition > 3000) {
             player.seekTo(0)
             return
         }
