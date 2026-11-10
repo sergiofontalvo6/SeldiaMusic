@@ -1,22 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- ===== MODO DÍA (claro) ===== -->
-    <color name="background">#FFFFFF</color>
+    <!-- ===== MODO DÍA (claro) - alineado con fondos de FordLauncher ===== -->
+    <color name="background">#E9ECF1</color>
     <color name="surface">#FFFFFF</color>
-    <color name="surface_high">#F1F5F9</color>
+    <color name="surface_high">#F1F3F7</color>
     <color name="glass_surface">#E6FFFFFF</color>
-    <color name="glass_surface_high">#F2FFFFFF</color>
-    <color name="glass_card">#E6FFFFFF</color>
-    <color name="glass_stroke">#1F000000</color>
+    <color name="glass_surface_high">#F2F1F3F7</color>
+    <color name="glass_card">#F2FFFFFF</color>
+    <color name="glass_stroke">#14000000</color>
     <color name="glass_highlight">#0A000000</color>
     <color name="primary">#FF0033</color>
     <color name="primary_soft">#33FF0033</color>
     <color name="accent_secondary">#FF4D6D</color>
     <color name="on_primary">#FFFFFF</color>
-    <color name="text_primary">#111827</color>
+    <color name="text_primary">#14161B</color>
     <color name="text_secondary">#6B7280</color>
     <color name="divider">#14000000</color>
-    <color name="sidebar_bg">#F8FAFC</color>
+    <color name="sidebar_bg">#DDE1E8</color>
     <color name="dot_online">#059669</color>
     <color name="dot_offline">#B45309</color>
 

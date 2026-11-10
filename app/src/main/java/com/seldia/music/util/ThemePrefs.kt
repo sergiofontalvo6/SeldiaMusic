@@ -83,6 +83,19 @@ object ThemePrefs {
         return if (mode == NIGHT_GLASS) glassThemeRes(accent) else accentThemeRes(accent)
     }
 
+    /** Aplica tema enviado desde FordLauncher. Devuelve true si cambió. */
+    fun applyExternalTheme(context: Context, light: Boolean): Boolean {
+        val mode = if (light) NIGHT_LIGHT else NIGHT_DARK
+        val p = getPrefs(context)
+        val changed = (p.getString(KEY_NIGHT, NIGHT_DARK) ?: NIGHT_DARK) != mode
+        if (changed) {
+            p.edit().putString(KEY_NIGHT, mode).apply()
+        }
+        prefs = p
+        applyNightMode()
+        return changed
+    }
+
     private fun applyNightMode() {
         val mode = nightMode
         val delegateMode = if (mode == NIGHT_LIGHT) {

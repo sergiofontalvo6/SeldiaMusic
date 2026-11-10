@@ -1,5 +1,9 @@
 package com.seldia.music.ui
 
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.res.Configuration
 import android.os.Bundle
 import android.view.View
@@ -140,35 +144,62 @@ class MainActivity : AppCompatActivity() {
     private val app: SeldiaApp
         get() = application as SeldiaApp
 
+    private val themeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == com.seldia.music.LauncherThemeReceiver.ACTION_THEME_APPLIED) {
+                recreate()
+            }
+        }
+    }
+
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        applyExternalTheme(intent)
         setTheme(com.seldia.music.util.ThemePrefs.themeResForContext(this))
         super.onCreate(savedInstanceState)
 
         if (isDesktop) {
             desktopBinding = ActivityMainDesktopBinding.inflate(layoutInflater)
             setContentView(desktopBinding!!.root)
-            setupDesktopSidebar()
-            setupDesktopPlayerPanel()
         } else {
             phoneBinding = ActivityMainBinding.inflate(layoutInflater)
             setContentView(phoneBinding!!.root)
             setupBottomNav()
         }
 
-        setupBottomBar()
-        observePlayerState()
-        observeDownloadStates()
-        observeConnectivity()
-        observeLikedCount()
-
-        if (savedInstanceState == null) {
-            phoneBinding?.bottomNav?.selectedItemId = R.id.nav_home
+        // Diferir inicialización pesada (ExoPlayer, DB, red, extractores) para mostrar UI rápido.
+        val rootView = if (isDesktop) desktopBinding!!.root else phoneBinding!!.root
+        val loadingOverlay = findViewById<View>(R.id.loading_overlay)
+        val firstLaunchPrefs = getSharedPreferences("seldia_ui_prefs", Context.MODE_PRIVATE)
+        val showFirstLaunchLoading = savedInstanceState == null && !firstLaunchPrefs.getBoolean("first_open_loading_done", false)
+        if (showFirstLaunchLoading) {
+            loadingOverlay?.visibility = View.VISIBLE
+        }
+        rootView.post {
+            if (isFinishing || isDestroyed) return@post
             if (isDesktop) {
-                // Filtro Listas activo por defecto: primera lista (Favoritas) en el centro.
-                likedActive = true
-                activeFilter = SidebarFilter.LISTAS
-                renderSidebarFilterStates()
-                selectSection(LikedSongsFragment())
+                setupDesktopSidebar()
+                setupDesktopPlayerPanel()
+            }
+            setupBottomBar()
+            observePlayerState()
+            observeDownloadStates()
+            observeConnectivity()
+            observeLikedCount()
+
+            if (savedInstanceState == null) {
+                phoneBinding?.bottomNav?.selectedItemId = R.id.nav_home
+                if (isDesktop) {
+                    // Filtro Listas activo por defecto: primera lista (Favoritas) en el centro.
+                    likedActive = true
+                    activeFilter = SidebarFilter.LISTAS
+                    renderSidebarFilterStates()
+                    selectSection(LikedSongsFragment())
+                }
+            }
+            if (showFirstLaunchLoading) {
+                loadingOverlay?.visibility = View.GONE
+                firstLaunchPrefs.edit().putBoolean("first_open_loading_done", true).apply()
             }
         }
     }
@@ -972,6 +1003,32 @@ class MainActivity : AppCompatActivity() {
     private fun toast(message: String) {
         android.widget.Toast.makeText(this, message, android.widget.Toast.LENGTH_SHORT).show()
     }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (applyExternalTheme(intent)) recreate()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val filter = IntentFilter(com.seldia.music.LauncherThemeReceiver.ACTION_THEME_APPLIED)
+        try {
+            registerReceiver(themeReceiver, filter)
+        } catch (_: Throwable) {}
+    }
+
+    override fun onPause() {
+        try { unregisterReceiver(themeReceiver) } catch (_: Throwable) {}
+        super.onPause()
+    }
+
+    private fun applyExternalTheme(i: Intent?): Boolean {
+        val theme = i?.getStringExtra("com.fordlauncher.theme") ?: i?.getStringExtra("theme") ?: return false
+        return com.seldia.music.util.ThemePrefs.applyExternalTheme(this, theme.equals("light", ignoreCase = true))
+    }
+
+
 
     private companion object {
         const val DESKTOP_MIN_WIDTH_DP = 840

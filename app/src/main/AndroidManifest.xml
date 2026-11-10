@@ -73,6 +73,14 @@
             </intent-filter>
         </receiver>
 
+        <receiver
+            android:name=".LauncherThemeReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.fordlauncher.launcher.action.APPLY_THEME" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

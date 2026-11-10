@@ -26,6 +26,12 @@ class YouTubePlayerActivity : AppCompatActivity() {
     private var videoId: String = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        intent?.let {
+            val theme = it.getStringExtra("com.fordlauncher.theme") ?: it.getStringExtra("theme")
+            if (theme != null) {
+                com.seldia.music.util.ThemePrefs.applyExternalTheme(this, theme.equals("light", ignoreCase = true))
+            }
+        }
         setTheme(com.seldia.music.util.ThemePrefs.themeResForContext(this))
         super.onCreate(savedInstanceState)
         binding = ActivityYoutubePlayerBinding.inflate(layoutInflater)
