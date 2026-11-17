@@ -83,6 +83,19 @@ class LibraryRepository(private val db: AppDatabase) {
     suspend fun findDownloadedUri(trackKey: String): String? =
         trackDao.getById(trackKey)?.uri?.takeIf { it.isNotBlank() }
 
+    /**
+     * Como [findDownloadedUri], pero valida que el archivo siga existiendo. Si la
+     * URI almacenada ya no es accesible (p. ej. se borraron los datos/archivos de la
+     * app), limpia el estado de descarga en Room para que la pista pueda volver a
+     * reproducirse en streaming y descargarse.
+     */
+    suspend fun findExistingDownloadedUri(context: android.content.Context, trackKey: String): String? {
+        val uri = findDownloadedUri(trackKey) ?: return null
+        if (com.seldia.music.util.LocalMedia.exists(context, uri)) return uri
+        updateDownloadStatus(trackKey, false)
+        return null
+    }
+
     /** Indica si una pista ya tiene un archivo de audio vinculado en Room (descargada). */
     suspend fun isTrackDownloaded(trackKey: String): Boolean =
         trackDao.getById(trackKey)?.uri?.isNotBlank() == true
@@ -90,6 +103,22 @@ class LibraryRepository(private val db: AppDatabase) {
     /** Observa las claves de todas las pistas que tienen URI local (descargadas). */
     fun observeDownloadedTrackKeys(): LiveData<Set<String>> =
         trackDao.observeDownloadedTrackKeys().map { it.toSet() }
+
+    /**
+     * Limpia en Room las referencias de descarga cuyos archivos ya no existen
+     * (p. ej. tras borrar datos/archivos de la app). Permite volver a reproducir
+     * por streaming y habilita la descarga de nuevo.
+     */
+    suspend fun purgeMissingDownloads(context: android.content.Context) {
+        val rows = trackDao.getWithUri()
+        rows.forEach { entity ->
+            val uri = entity.uri?.takeIf { it.isNotBlank() } ?: return@forEach
+            if (!com.seldia.music.util.LocalMedia.exists(context, uri)) {
+                trackDao.updateUri(entity.id, "")
+                runCatching { historyDao.clearUri(uri) }
+            }
+        }
+    }
 
     // ---- Favoritos ----
 

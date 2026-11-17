@@ -1,8 +1,13 @@
 package com.seldia.music.playback
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.Context
 import android.content.Intent
 import android.os.Build
+import android.util.Log
 import android.view.KeyEvent
+import androidx.core.app.NotificationCompat
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -30,6 +35,39 @@ class PlaybackService : MediaSessionService() {
             .setCallback(SteeringWheelCallback(musicPlayer))
             .build()
         addSession(mediaSession!!)
+    }
+
+    /**
+     * Si el servicio se inicia desde FiestaLauncher por voz, hay que entrar en primer
+     * plano de inmediato (Android 8 da 5 s tras startForegroundService). Media3
+     * sustituirá esta notificación por la del reproductor al empezar a sonar.
+     */
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.getBooleanExtra(EXTRA_BG_PLAY, false) == true) notificacionDeEspera()
+        return super.onStartCommand(intent, flags, startId)
+    }
+
+    private fun notificacionDeEspera() {
+        try {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val ch = NotificationChannel(
+                    CANAL_BG, "Reproducción en segundo plano", NotificationManager.IMPORTANCE_LOW
+                )
+                ch.setShowBadge(false)
+                nm.createNotificationChannel(ch)
+            }
+            val n = NotificationCompat.Builder(this, CANAL_BG)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentTitle("Seldia Music")
+                .setContentText("Preparando reproducción…")
+                .setOngoing(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            startForeground(ID_BG, n)
+        } catch (t: Throwable) {
+            Log.w(TAG, "No se pudo entrar en primer plano", t)
+        }
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? =
@@ -97,5 +135,13 @@ class PlaybackService : MediaSessionService() {
                 @Suppress("DEPRECATION")
                 getParcelableExtra(Intent.EXTRA_KEY_EVENT) as? KeyEvent
             }
+    }
+
+    companion object {
+        /** Lo envía FiestaLauncher al iniciar el servicio para reproducción por voz. */
+        const val EXTRA_BG_PLAY = "com.fordlauncher.bg_play"
+        private const val CANAL_BG = "seldia_bg_play"
+        private const val ID_BG = 4211
+        private const val TAG = "SeldiaPlayback"
     }
 }

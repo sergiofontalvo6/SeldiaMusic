@@ -389,11 +389,22 @@ class MusicPlayer(
 
     private suspend fun resolveUrls(track: Track, video: Boolean): List<String> = runCatching {
         when (track.source) {
-            Source.LOCAL -> listOfNotNull(track.uri)
+            Source.LOCAL -> {
+                val local = track.uri?.takeIf { it.isNotBlank() }
+                if (local != null && com.seldia.music.util.LocalMedia.exists(context, local)) {
+                    listOf(local)
+                } else {
+                    if (local != null) {
+                        Log.w(TAG, "Archivo local no disponible para \"${track.title}\"; limpiando estado")
+                        runCatching { libraryRepository.updateDownloadStatus(track.key, false) }
+                    }
+                    emptyList()
+                }
+            }
             Source.YOUTUBE -> {
                 // 1) Si la pista ya está descargada (uri enlazada en Room), reproduce el archivo local.
-                val local = track.uri?.takeIf { it.isNotBlank() }
-                    ?: runCatching { libraryRepository.findDownloadedUri(track.key) }.getOrNull()
+                val local = track.uri?.takeIf { it.isNotBlank() && com.seldia.music.util.LocalMedia.exists(context, it) }
+                    ?: runCatching { libraryRepository.findExistingDownloadedUri(context, track.key) }.getOrNull()
                 if (!local.isNullOrBlank()) return@runCatching listOf(local)
                 // 2) Sin conexión: no hay streams remotos; la pista no está disponible offline.
                 if (network != null && !network.isCurrentlyOnline()) {
@@ -429,12 +440,16 @@ class MusicPlayer(
         }
     }
 
+    private var lastBroadcastTrackKey: String? = null
+    private var lastBroadcastPlaying: Boolean? = null
+
     private fun publish() {
         val current = queue.getOrNull(currentIndex)
         val duration = player.duration.takeIf { it > 0 } ?: current?.durationMs ?: 0L
+        val playing = player.isPlaying
         _state.value = PlayerState(
             currentTrack = current,
-            isPlaying = player.isPlaying,
+            isPlaying = playing,
             isBuffering = player.playbackState == Player.STATE_BUFFERING,
             positionMs = lastPositionMs,
             durationMs = duration,
@@ -444,6 +459,62 @@ class MusicPlayer(
             shuffleEnabled = shuffleEnabled,
             videoMode = videoMode
         )
+        broadcastForLauncher(current, playing)
+    }
+
+    /** Notifica metadatos/estado a launchers (FordLauncher) y al sistema, incluso en reproducción en segundo plano. */
+    private fun broadcastForLauncher(track: Track?, playing: Boolean) {
+        if (track == null) return
+        val key = track.key
+        val trackChanged = key != lastBroadcastTrackKey
+        val playChanged = playing != lastBroadcastPlaying
+        if (!trackChanged && !playChanged) return
+        lastBroadcastTrackKey = key
+        lastBroadcastPlaying = playing
+        try {
+            if (trackChanged) {
+                val meta = android.content.Intent("com.android.music.metachanged").apply {
+                    putExtra("id", track.id)
+                    putExtra("track", track.title ?: "")
+                    putExtra("artist", track.artist ?: "")
+                    putExtra("album", track.album ?: "")
+                    putExtra("playing", playing)
+                    putExtra("duration", player.duration.takeIf { it > 0 } ?: track.durationMs)
+                    putExtra("position", player.currentPosition.coerceAtLeast(0L))
+                }
+                context.sendBroadcast(meta)
+                context.sendBroadcast(android.content.Intent("com.seldia.music.metachanged").apply {
+                    putExtra("track", track.title ?: "")
+                    putExtra("artist", track.artist ?: "")
+                    putExtra("album", track.album ?: "")
+                    putExtra("playing", playing)
+                })
+                Log.i(TAG, "META_BROADCAST title=\"${track.title}\" artist=\"${track.artist}\" playing=$playing")
+            }
+            if (playChanged || trackChanged) {
+                val st = android.content.Intent("com.android.music.playstatechanged").apply {
+                    putExtra("id", track.id)
+                    putExtra("track", track.title ?: "")
+                    putExtra("artist", track.artist ?: "")
+                    putExtra("album", track.album ?: "")
+                    putExtra("playing", playing)
+                    putExtra("playstate", playing)
+                    putExtra("isPlaying", playing)
+                    putExtra("position", player.currentPosition.coerceAtLeast(0L))
+                    putExtra("duration", player.duration.takeIf { it > 0 } ?: track.durationMs)
+                }
+                context.sendBroadcast(st)
+                context.sendBroadcast(android.content.Intent("com.seldia.music.playstatechanged").apply {
+                    putExtra("track", track.title ?: "")
+                    putExtra("artist", track.artist ?: "")
+                    putExtra("playing", playing)
+                    putExtra("playstate", playing)
+                })
+                Log.i(TAG, "STATE_BROADCAST playing=$playing track=\"${track.title}\" pos=${player.currentPosition}")
+            }
+        } catch (t: Throwable) {
+            Log.w(TAG, "No se pudo emitir broadcast de música", t)
+        }
     }
 
     /** Cancelación explícita del scope (app-scoped: llamar desde el dueño al destruir). */

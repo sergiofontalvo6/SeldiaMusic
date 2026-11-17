@@ -135,7 +135,7 @@ class QueueFragment : Fragment() {
         }
         viewLifecycleOwner.lifecycleScope.launch {
             val already = runCatching {
-                container.libraryRepository.findDownloadedUri(track.key)
+                container.libraryRepository.findExistingDownloadedUri(requireContext(), track.key)
             }.getOrNull()
             if (already != null) {
                 Toast.makeText(requireContext(), R.string.download_already_local, Toast.LENGTH_SHORT).show()

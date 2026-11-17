@@ -5,12 +5,16 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.PopupMenu
+import androidx.lifecycle.lifecycleScope
 import com.seldia.music.R
 import com.seldia.music.data.model.Track
 import com.seldia.music.databinding.FragmentTableListBinding
 import com.seldia.music.util.formatTotalDuration
 import com.seldia.music.util.showModernConfirmDialog
 import com.seldia.music.util.showRenamePlaylistDialog
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Base para pantallas de lista tabulada estilo desktop (playlist, favoritos,
@@ -40,7 +44,48 @@ abstract class TableListFragment : TrackListFragment() {
         binding.btnPlayAll.setOnClickListener {
             if (currentTracks.isNotEmpty()) playerVm.playQueue(currentTracks, 0)
         }
+        binding.btnDownloadAll.setOnClickListener { downloadAllCurrentTracks() }
         binding.btnMoreOptions.setOnClickListener { showHeaderOverflow(it) }
+    }
+
+    /** Descarga (solo audio) todas las canciones de la lista que aún no tengan archivo local. */
+    private fun downloadAllCurrentTracks() {
+        if (!isAdded || view == null) return
+        val tracks = currentTracks.filter { it.source == com.seldia.music.data.model.Source.YOUTUBE }
+        if (tracks.isEmpty()) {
+            toast(getString(R.string.download_all_none))
+            return
+        }
+        if (!container.networkConnectivityManager.isCurrentlyOnline()) {
+            toast(getString(R.string.download_offline_blocked))
+            return
+        }
+
+        val appCtx = requireContext().applicationContext
+        val repo = container.libraryRepository
+        val downloadManager = container.mediaDownloadManager
+        binding.btnDownloadAll.isEnabled = false
+
+        viewLifecycleOwner.lifecycleScope.launch {
+            try {
+                val toDownload = withContext(Dispatchers.IO) {
+                    tracks.filter { track ->
+                        runCatching { repo.findExistingDownloadedUri(appCtx, track.key) }.getOrNull() == null
+                    }
+                }
+                if (!isAdded || view == null) return@launch
+                if (toDownload.isEmpty()) {
+                    toast(getString(R.string.download_all_none))
+                    return@launch
+                }
+                toast(getString(R.string.download_all_enqueued, toDownload.size))
+                withLegacyWritePermission {
+                    downloadManager.enqueueAll(toDownload, com.seldia.music.playback.DownloadFormat.AUDIO)
+                }
+            } finally {
+                if (_binding != null) binding.btnDownloadAll.isEnabled = true
+            }
+        }
     }
 
     private fun showHeaderOverflow(anchor: View) {

@@ -149,11 +149,9 @@ class TrackTableAdapter(
         return linkedKeys.firstNotNullOfOrNull { downloadStates[it] } ?: DownloadStatus.Idle
     }
 
+    /** True si existe una copia offline descargada y accesible registrada en Room. */
     private fun Track.hasDownloadedFile(): Boolean =
-        source == Source.LOCAL ||
-            uri?.isNotBlank() == true ||
-            key in downloadedKeys ||
-            linkedKeys.any { it in downloadedKeys }
+        key in downloadedKeys || linkedKeys.any { it in downloadedKeys }
 
     private fun Set<String>.symmetricDiff(other: Set<String>): Set<String> =
         (this - other) + (other - this)

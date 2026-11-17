@@ -46,6 +46,7 @@ class PlayerFragment : Fragment() {
         get() = (requireActivity().application as SeldiaApp).container
 
     private var downloadStates: Map<String, DownloadStatus> = emptyMap()
+    private var downloadedKeys: Set<String> = emptySet()
     private var lastArtworkUrl: String? = null
     private var pendingDownloadAction: (() -> Unit)? = null
 
@@ -145,6 +146,11 @@ class PlayerFragment : Fragment() {
                 }
             }
         }
+
+        container.libraryRepository.observeDownloadedTrackKeys().observe(viewLifecycleOwner) { keys ->
+            downloadedKeys = keys
+            renderDownloadState(playerVm.state.value.currentTrack)
+        }
     }
 
     private fun openLyricsSheet() {
@@ -169,10 +175,10 @@ class PlayerFragment : Fragment() {
             Toast.makeText(requireContext(), R.string.download_offline_blocked, Toast.LENGTH_LONG).show()
             return
         }
-        // Ya descargada (URI enlazada en Room): no duplicar el archivo.
+        // Ya descargada (URI enlazada en Room y archivo accesible): no duplicar el archivo.
         viewLifecycleOwner.lifecycleScope.launch {
             val already = runCatching {
-                container.libraryRepository.findDownloadedUri(track.key)
+                container.libraryRepository.findExistingDownloadedUri(requireContext(), track.key)
             }.getOrNull()
             if (already != null) {
                 Toast.makeText(requireContext(), R.string.download_already_local, Toast.LENGTH_SHORT).show()
@@ -291,8 +297,9 @@ class PlayerFragment : Fragment() {
         binding.btnDownload.isEnabled = isYouTube
         binding.btnDownload.alpha = if (isYouTube) 1f else 0.4f
 
-        // Descargada si: está como Completed en el flujo actual O ya tiene URI en Room (sesión previa).
-        val alreadyDownloaded = status is DownloadStatus.Completed || track?.uri?.isNotBlank() == true
+        // Descargada solo si hay copia offline válida registrada (Room) o completada en esta sesión.
+        val alreadyDownloaded = status is DownloadStatus.Completed ||
+            (track != null && (track.key in downloadedKeys || track.linkedKeys.any { it in downloadedKeys }))
         val tint = if (alreadyDownloaded) requireContext().accentPrimaryColor() else ContextCompat.getColor(requireContext(), R.color.text_primary)
         binding.btnDownload.setColorFilter(tint)
     }

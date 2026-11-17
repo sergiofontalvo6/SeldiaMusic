@@ -145,4 +145,7 @@ interface HistoryDao {
 
     @Query("DELETE FROM history WHERE uri = :uri")
     suspend fun deleteByUri(uri: String)
+
+    @Query("UPDATE history SET uri = '' WHERE uri = :uri")
+    suspend fun clearUri(uri: String)
 }

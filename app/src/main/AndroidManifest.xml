@@ -46,6 +46,10 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.media.action.MEDIA_PLAY_FROM_SEARCH" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
         </activity>
 
         <activity
@@ -70,6 +74,14 @@
                 <action android:name="com.seldia.music.action.PLAY_PAUSE" />
                 <action android:name="com.seldia.music.action.NEXT" />
                 <action android:name="com.seldia.music.action.PREVIOUS" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".playback.VoicePlaybackReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.seldia.music.action.VOICE_PLAY" />
             </intent-filter>
         </receiver>
 

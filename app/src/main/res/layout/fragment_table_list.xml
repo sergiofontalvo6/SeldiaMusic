@@ -79,6 +79,16 @@
             app:strokeWidth="0dp" />
 
         <ImageButton
+            android:id="@+id/btn_download_all"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/download_all"
+            android:src="@drawable/ic_download"
+            android:tint="@color/text_primary" />
+
+        <ImageButton
             android:id="@+id/btn_more_options"
             android:layout_width="36dp"
             android:layout_height="36dp"

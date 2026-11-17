@@ -5,6 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.Configuration
+import android.app.SearchManager
+import android.provider.MediaStore
 import android.os.Bundle
 import android.view.View
 import android.view.ViewGroup
@@ -49,6 +51,7 @@ import com.seldia.music.ui.player.LyricsBottomSheetFragment
 import com.seldia.music.ui.player.PlayerFragment
 import com.seldia.music.ui.playlist.PlaylistDetailFragment
 import com.seldia.music.ui.queue.QueueFragment
+import com.seldia.music.ui.SearchViewModel
 import com.seldia.music.ui.search.SearchFragment
 import com.seldia.music.ui.adapters.SidebarPlaylistAdapter
 import com.seldia.music.util.OfflinePrefs
@@ -74,6 +77,7 @@ class MainActivity : AppCompatActivity() {
     private var fullscreen = false
     private var lastArtworkUrl: String? = null
     private var isCurrentFavorite = false
+    private var downloadedKeys: Set<String> = emptySet()
     private var favoriteTrackKey: String? = null
     private var userScrubbing = false
     private var sidebarPlaylistAdapter: SidebarPlaylistAdapter? = null
@@ -129,6 +133,9 @@ class MainActivity : AppCompatActivity() {
 
     private val playerVm: PlayerViewModel by viewModels()
     private val libraryVm: LibraryViewModel by viewModels()
+    private val searchVm: SearchViewModel by viewModels()
+    private var pendingVoiceQuery: String? = null
+    private var voiceSearchObserved = false
 
     private val isDesktop: Boolean
         get() = resources.configuration.screenWidthDp >= DESKTOP_MIN_WIDTH_DP ||
@@ -186,6 +193,9 @@ class MainActivity : AppCompatActivity() {
             observeDownloadStates()
             observeConnectivity()
             observeLikedCount()
+            lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                app.container.libraryRepository.purgeMissingDownloads(applicationContext)
+            }
 
             if (savedInstanceState == null) {
                 phoneBinding?.bottomNav?.selectedItemId = R.id.nav_home
@@ -201,6 +211,7 @@ class MainActivity : AppCompatActivity() {
                 loadingOverlay?.visibility = View.GONE
                 firstLaunchPrefs.edit().putBoolean("first_open_loading_done", true).apply()
             }
+            handleVoicePlayIntent(intent)
         }
     }
 
@@ -478,8 +489,9 @@ class MainActivity : AppCompatActivity() {
         }
         // Sincronización reactiva de descargas en barra/panel (Room + sesión).
         app.container.libraryRepository.observeDownloadedTrackKeys().observe(this) { keys ->
+            downloadedKeys = keys
             val track = playerVm.state.value.currentTrack ?: return@observe
-            val tint = if (keys.contains(track.key)) accentPrimaryColor()
+            val tint = if (isTrackDownloadedOffline(track)) accentPrimaryColor()
             else androidx.core.content.ContextCompat.getColor(this, R.color.text_primary)
             npBtnDownload?.setColorFilter(tint)
             bottomBarBinding?.btnDownloadBottom?.setColorFilter(tint)
@@ -571,7 +583,7 @@ class MainActivity : AppCompatActivity() {
             else -> {
                 lifecycleScope.launch {
                     val already = runCatching {
-                        app.container.libraryRepository.findDownloadedUri(track.key)
+                        app.container.libraryRepository.findExistingDownloadedUri(this@MainActivity, track.key)
                     }.getOrNull()
                     if (already != null) {
                         toast(getString(R.string.download_already_local))
@@ -786,16 +798,30 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        val alreadyDownloaded = track.uri?.isNotBlank() == true
+        val alreadyDownloaded = isTrackDownloadedOffline(track)
         val tint = if (alreadyDownloaded) accentPrimaryColor() else androidx.core.content.ContextCompat.getColor(this, R.color.text_primary)
         npBtnDownload?.setColorFilter(tint)
         bar?.btnDownloadBottom?.setColorFilter(tint)
         npProgressDownload?.visibility = View.GONE
+        // Auto-limpieza reactiva: si hay referencia obsoleta en el objeto en memoria, sanearla.
+        if (!alreadyDownloaded && track.uri?.isNotBlank() == true && track.source == Source.YOUTUBE) {
+            lifecycleScope.launch {
+                val exists = runCatching {
+                    app.container.libraryRepository.findExistingDownloadedUri(this@MainActivity, track.key)
+                }.getOrNull()
+                if (exists == null) {
+                    runCatching { app.container.libraryRepository.updateDownloadStatus(track.key, false) }
+                }
+            }
+        }
     }
+
+    private fun isTrackDownloadedOffline(track: Track): Boolean =
+        track.key in downloadedKeys || track.linkedKeys.any { it in downloadedKeys }
 
     private suspend fun updateNowPlayingDownloadState(track: Track) {
         val already = runCatching {
-            app.container.libraryRepository.findDownloadedUri(track.key)
+            app.container.libraryRepository.findExistingDownloadedUri(this, track.key)
         }.getOrNull() != null
         val tint = if (already) accentPrimaryColor() else androidx.core.content.ContextCompat.getColor(this, R.color.text_primary)
         npBtnDownload?.setColorFilter(tint)
@@ -1008,6 +1034,7 @@ class MainActivity : AppCompatActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         if (applyExternalTheme(intent)) recreate()
+        handleVoicePlayIntent(intent)
     }
 
     override fun onResume() {
@@ -1029,6 +1056,64 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+
+    private fun handleVoicePlayIntent(intent: Intent?) {
+        if (intent?.action != MediaStore.INTENT_ACTION_MEDIA_PLAY_FROM_SEARCH) return
+        val query = (intent.getStringExtra(SearchManager.QUERY)
+            ?: intent.getStringExtra("query")
+            ?: intent.getStringExtra("com.seldia.music.extra.SEARCH_QUERY"))?.trim().orEmpty()
+        if (query.isBlank()) return
+        val t0 = android.os.SystemClock.elapsedRealtime()
+        android.util.Log.i("SeldiaVoicePlay", "MEDIA_PLAY_FROM_SEARCH query=\"$query\"")
+
+        // Resuelve y reproduce en segundo plano sin depender de inflar/esperar la UI de búsqueda.
+        lifecycleScope.launch {
+            try {
+                val container = app.container
+                val tracks = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val local = runCatching {
+                        container.offlineMusicRepository.loadTracks().filter { tr ->
+                            tr.title.contains(query, true) || tr.artist.contains(query, true) || tr.album.contains(query, true)
+                        }
+                    }.getOrDefault(emptyList())
+                    if (local.isNotEmpty()) return@withContext local
+                    if (!container.networkConnectivityManager.isCurrentlyOnline()) return@withContext emptyList<Track>()
+                    kotlinx.coroutines.withTimeoutOrNull(4000L) {
+                        container.youtubeRepository.search(query).getOrElse { emptyList() }
+                    } ?: emptyList()
+                }
+                if (tracks.isNotEmpty()) {
+                    pendingVoiceQuery = null
+                    playerVm.playQueue(tracks, 0)
+                    android.util.Log.i("SeldiaVoicePlay", "PLAY_START(UI-intent) query=\"$query\" first=\"${tracks.first().title}\" t=${android.os.SystemClock.elapsedRealtime() - t0}ms")
+                    return@launch
+                }
+            } catch (t: Throwable) {
+                android.util.Log.w("SeldiaVoicePlay", "Búsqueda rápida falló, fallback UI", t)
+            }
+            // Fallback: flujo UI de búsqueda
+            searchVm.clear()
+            pendingVoiceQuery = query
+            observeVoiceSearch()
+            searchVm.search(query)
+            navigate(com.seldia.music.ui.search.SearchFragment.newInstance(query))
+            hideControlsHandler.postDelayed({
+                if (pendingVoiceQuery == query) pendingVoiceQuery = null
+            }, 20000)
+        }
+    }
+
+    private fun observeVoiceSearch() {
+        if (voiceSearchObserved) return
+        voiceSearchObserved = true
+        searchVm.results.observe(this) { results ->
+            val pending = pendingVoiceQuery ?: return@observe
+            if (!results.isNullOrEmpty()) {
+                pendingVoiceQuery = null
+                playerVm.playQueue(results, 0)
+            }
+        }
+    }
 
     private companion object {
         const val DESKTOP_MIN_WIDTH_DP = 840

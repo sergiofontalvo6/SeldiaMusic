@@ -356,10 +356,10 @@ abstract class TrackListFragment : Fragment() {
             toast(getString(R.string.download_already_local))
             return
         }
-        // Ya descargada (URI enlazada en Room): no duplicar el archivo.
+        // Ya descargada (URI enlazada en Room y archivo accesible): no duplicar el archivo.
         viewLifecycleOwner.lifecycleScope.launch {
             val already = runCatching {
-                container.libraryRepository.findDownloadedUri(track.key)
+                container.libraryRepository.findExistingDownloadedUri(requireContext(), track.key)
             }.getOrNull()
             if (already != null) {
                 toast(getString(R.string.download_already_local))
@@ -376,7 +376,7 @@ abstract class TrackListFragment : Fragment() {
      * En API 29+ MediaStore no necesita WRITE_EXTERNAL_STORAGE. En API 27-28
      * el proveedor todavía lo exige, así que se solicita antes de descargar.
      */
-    private fun withLegacyWritePermission(action: () -> Unit) {
+    protected fun withLegacyWritePermission(action: () -> Unit) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             action()
             return

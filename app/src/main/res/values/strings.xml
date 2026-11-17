@@ -146,6 +146,9 @@
     <string name="download_permission_denied">Permiso de almacenamiento denegado. Actívalo para guardar el archivo.</string>
     <string name="download_offline_audio_only">Sin conexión: se descargará solo el audio (M4A).</string>
     <string name="download_offline_blocked">Sin conexión: no se puede descargar ahora. Se guardará solo audio cuando vuelvas a estar en línea.</string>
+    <string name="download_all">Descargar lista</string>
+    <string name="download_all_enqueued">Descargando %1$d canciones…</string>
+    <string name="download_all_none">No hay canciones nuevas para descargar en esta lista.</string>
     <string name="delete_offline">Eliminar de Sin conexión</string>
     <string name="offline_delete_title">Eliminar descarga</string>
     <string name="offline_delete_message">Se borrará el archivo "%1$s" y desaparecerá de tu biblioteca offline (favoritos, playlists e historial).</string>

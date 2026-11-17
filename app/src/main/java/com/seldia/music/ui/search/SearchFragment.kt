@@ -29,6 +29,13 @@ import java.util.Locale
  */
 class SearchFragment : TrackListFragment() {
 
+    companion object {
+        private const val ARG_QUERY = "query"
+        fun newInstance(query: String): SearchFragment = SearchFragment().apply {
+            arguments = android.os.Bundle().apply { putString(ARG_QUERY, query) }
+        }
+    }
+
     private var _binding: FragmentSearchBinding? = null
     private val binding get() = _binding!!
 
@@ -85,6 +92,11 @@ class SearchFragment : TrackListFragment() {
             }
             override fun afterTextChanged(s: Editable?) = Unit
         })
+
+        arguments?.getString("query")?.takeIf { it.isNotBlank() }?.let { q ->
+            binding.etSearch.setText(q)
+            binding.etSearch.setSelection(q.length)
+        }
 
         searchVm.results.observe(viewLifecycleOwner) { results ->
             adapter.submit(results)

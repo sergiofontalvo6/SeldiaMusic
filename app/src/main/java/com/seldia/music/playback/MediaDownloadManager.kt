@@ -65,12 +65,27 @@ class MediaDownloadManager(
     private val _downloadStates = MutableStateFlow<Map<String, DownloadStatus>>(emptyMap())
     val downloadStates: StateFlow<Map<String, DownloadStatus>> = _downloadStates.asStateFlow()
 
+    private data class DownloadRequest(
+        val track: Track,
+        val format: DownloadFormat,
+        val fromAutoDownload: Boolean
+    )
+
+    private val downloadQueue = ArrayDeque<DownloadRequest>()
+    private val queuedKeys = mutableSetOf<String>()
+    private var drainingQueue = false
+
     /**
      * Descarga automática: SIEMPRE solo el flujo de audio (M4A/WEBM), nunca vídeo.
      * Se usa cuando la opción "Auto-descarga" está activada o en modo sin conexión.
      */
     fun autoDownloadAudio(track: Track) {
         download(track, DownloadFormat.AUDIO, fromAutoDownload = true)
+    }
+
+    /** Encola varias pistas para descargarlas secuencialmente, una por una. */
+    fun enqueueAll(tracks: List<Track>, format: DownloadFormat) {
+        tracks.forEach { download(it, format, fromAutoDownload = false) }
     }
 
     fun download(track: Track, format: DownloadFormat, fromAutoDownload: Boolean = false) {
@@ -103,43 +118,91 @@ class MediaDownloadManager(
             return
         }
 
+        synchronized(this) {
+            if (!queuedKeys.add(key)) return
+            downloadQueue.addLast(DownloadRequest(track, effectiveFormat, fromAutoDownload))
+        }
         _downloadStates.update { it + (key to DownloadStatus.Preparing) }
-        toast(context.getString(R.string.download_starting, track.title))
+        drainQueue()
+    }
+
+    private fun drainQueue() {
+        val shouldStart = synchronized(this) {
+            if (drainingQueue) false else {
+                drainingQueue = true
+                true
+            }
+        }
+        if (!shouldStart) return
 
         scope.launch {
-            val result = runCatching {
-                val media = withContext(Dispatchers.IO) {
-                    val videoId = track.videoId ?: track.id
-                    youtubeRepository
-                        .getDownloadMedia(videoId, video = effectiveFormat == DownloadFormat.VIDEO)
-                        .getOrThrow()
-                }
-
-                withContext(Dispatchers.IO) {
-                    saveToMediaStore(track, media, effectiveFormat) { progress ->
-                        _downloadStates.update {
-                            it + (key to DownloadStatus.Downloading(progress))
+            try {
+                while (true) {
+                    val request = synchronized(this@MediaDownloadManager) {
+                        downloadQueue.removeFirstOrNull()
+                    } ?: break
+                    try {
+                        runDownload(request)
+                    } finally {
+                        synchronized(this@MediaDownloadManager) {
+                            queuedKeys.remove(request.track.key)
                         }
                     }
                 }
+            } finally {
+                val hasMore = synchronized(this@MediaDownloadManager) {
+                    drainingQueue = false
+                    downloadQueue.isNotEmpty()
+                }
+                if (hasMore) drainQueue()
+            }
+        }
+    }
+
+    private suspend fun runDownload(request: DownloadRequest) {
+        val track = request.track
+        val effectiveFormat = request.format
+        val key = track.key
+
+        if (!request.fromAutoDownload) {
+            toast(context.getString(R.string.download_starting, track.title))
+        } else {
+            // Auto-descarga: indicar inicio sin ser intrusivo (el manager ya controla cola).
+            toast(context.getString(R.string.download_starting, track.title))
+        }
+
+        val result = runCatching {
+            val media = withContext(Dispatchers.IO) {
+                val videoId = track.videoId ?: track.id
+                youtubeRepository
+                    .getDownloadMedia(videoId, video = effectiveFormat == DownloadFormat.VIDEO)
+                    .getOrThrow()
             }
 
-            result.onSuccess { uri ->
-                Log.i(TAG, "Descarga completada: $uri (${effectiveFormat.name})")
-                _downloadStates.update { it + (key to DownloadStatus.Completed(uri)) }
-                if (effectiveFormat == DownloadFormat.AUDIO && onAudioDownloaded != null) {
-                    // Vincula la pista con el archivo local en Room (disponibilidad offline).
-                    runCatching { onAudioDownloaded.invoke(track, uri) }
-                        .onFailure { Log.w(TAG, "No se pudo enlazar la descarga en Room", it) }
+            withContext(Dispatchers.IO) {
+                saveToMediaStore(track, media, effectiveFormat) { progress ->
+                    _downloadStates.update {
+                        it + (key to DownloadStatus.Downloading(progress))
+                    }
                 }
-                toast(context.getString(R.string.download_saved, track.title))
-            }.onFailure { error ->
-                Log.e(TAG, "Error descargando \"${track.title}\" (${effectiveFormat.name})", error)
-                _downloadStates.update {
-                    it + (key to DownloadStatus.Failed(error.message))
-                }
-                toast(R.string.download_failed)
             }
+        }
+
+        result.onSuccess { uri ->
+            Log.i(TAG, "Descarga completada: $uri (${effectiveFormat.name})")
+            _downloadStates.update { it + (key to DownloadStatus.Completed(uri)) }
+            if (effectiveFormat == DownloadFormat.AUDIO) {
+                // Vincula la pista con el archivo local en Room (disponibilidad offline).
+                runCatching { onAudioDownloaded?.invoke(track, uri) }
+                    .onFailure { Log.w(TAG, "No se pudo enlazar la descarga en Room", it) }
+            }
+            toast(context.getString(R.string.download_saved, track.title))
+        }.onFailure { error ->
+            Log.e(TAG, "Error descargando \"${track.title}\" (${effectiveFormat.name})", error)
+            _downloadStates.update {
+                it + (key to DownloadStatus.Failed(error.message))
+            }
+            toast(R.string.download_failed)
         }
     }
 
